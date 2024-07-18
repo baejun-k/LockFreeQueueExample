@@ -3,6 +3,7 @@
 
 
 #include "IQueueHandle.h"
+#include <functional>
 #include <atomic>
 #include <assert.h>
 
@@ -13,24 +14,21 @@ namespace container
 namespace _private
 {
 
-template<typename DataType>
-struct DefaultAllocator
+struct DefaultAlloc
 {
-	DataType* operator() ()
+	void* operator() (const size_t& sz) const
 	{
-		return new DataType();
+		return std::malloc(sz);
 	}
 };
 
-template<typename DataType>
-struct DefaultDeallocator
+struct DefaultDealloc
 {
-	void operator() (DataType*& ptr)
+	void operator() (void* ptr) const
 	{
 		if (nullptr != ptr)
 		{
-			delete ptr;
-			ptr = nullptr;
+			std::free(ptr);
 		}
 	}
 };
@@ -39,8 +37,8 @@ struct DefaultDeallocator
 
 template<
 	typename DataType,
-	template<typename Ty> typename Allocator = _private::DefaultAllocator,
-	template<typename Ty> typename Deallocator = _private::DefaultDeallocator
+	typename AllocFn = _private::DefaultAlloc,
+	typename DeallocFn = _private::DefaultDealloc
 >
 class LockFreeQueue : public IQueueHandle<DataType>
 {
@@ -54,27 +52,33 @@ private:
 			: data()
 			, next(nullptr)
 		{}
+		~Node() 
+		{ 
+			next = nullptr; 
+		}
 	};
 
-	using Allocator_t = Allocator<LockFreeQueue::Node>;
-	using Deallocator_t = Deallocator<LockFreeQueue::Node>;
+	using AllocFn_t = AllocFn;
+	using DeallocFn_t = DeallocFn;
 
 	LockFreeQueue::Node m_head;
 	std::atomic<LockFreeQueue::Node*> m_tail;
 
-	Allocator_t   m_allocator;
-	Deallocator_t m_deallocator;
+	AllocFn_t   m_allocFn;
+	DeallocFn_t m_deallocFn;
 
 public:
 	LockFreeQueue()
 		: IQueueHandle<DataType>()
 		, m_head()
 		, m_tail(&m_head)
-		, m_allocator()
-		, m_deallocator()
+		, m_allocFn()
+		, m_deallocFn()
 	{}
 	LockFreeQueue(LockFreeQueue const&) = delete;
+	LockFreeQueue(LockFreeQueue&&) noexcept = delete;
 	LockFreeQueue& operator=(LockFreeQueue const&) = delete;
+	LockFreeQueue& operator=(LockFreeQueue&&) noexcept = delete;
 
 	virtual ~LockFreeQueue() 
 	{
@@ -83,47 +87,54 @@ public:
 
 	virtual bool Enqueue(DataType const& in_item) override
 	{
-		Node* const pNewNode = m_allocator();
+		Node* const pNewNode = reinterpret_cast<Node*>(m_allocFn(sizeof(Node)));
 		if (nullptr == pNewNode)
 		{
 			return false;
 		}
+		new (pNewNode) Node();
 		pNewNode->data = in_item;
-		return _Enqueue(pNewNode);
+		_Enqueue(pNewNode);
+		return true;
 	}
-	virtual bool Enqueue(DataType&& in_item) override
+
+	virtual bool Enqueue(DataType&& in_item) noexcept override
 	{
-		Node* const pNewNode = m_allocator();
+		Node* const pNewNode = reinterpret_cast<Node*>(m_allocFn(sizeof(Node)));
 		if (nullptr == pNewNode)
 		{
 			return false;
 		}
+		new (pNewNode) Node();
 		pNewNode->data = std::move(in_item);
-		return _Enqueue(pNewNode);
+		_Enqueue(pNewNode);
+		return true;
 	}
-	virtual bool Dequeue(DataType& out_item) override
+
+	virtual std::optional<DataType> Dequeue() override
 	{
 		Node* pResult = _Dequeue();
 		if (nullptr == pResult)
 		{
-			return false;
+			return std::nullopt;
 		}
-		out_item = pResult->data;
-		m_deallocator(pResult);
-		return true;
+		std::optional<DataType> result = pResult->data;
+		m_deallocFn(pResult);
+		return result;
 	}
+
 	virtual void Clear() override
 	{
 		Node* pNext = _Dequeue();
 		while (nullptr != pNext)
 		{
-			m_deallocator(pNext);
+			m_deallocFn(pNext);
 			pNext = _Dequeue();
 		};
 	}
 
 private:
-	bool _Enqueue(Node* const pNewNode)
+	void _Enqueue(Node* const pNewNode)
 	{
 		Node* pOldTail = m_tail.load();
 		Node* pOldTailNext = pOldTail->next;
@@ -143,7 +154,7 @@ private:
 				pOldTailNext = pOldTail->next;
 			}
 		}
-		return m_tail.compare_exchange_weak(pOldTail, pNewNode);
+		m_tail.compare_exchange_weak(pOldTail, pNewNode);
 	}
 	Node* _Dequeue()
 	{

@@ -2,6 +2,9 @@
 #define __INTERFACE_QUEUE_HANDLE_HEADER__
 
 
+#include <optional>
+
+
 namespace container
 {
 
@@ -13,8 +16,8 @@ public:
 	virtual ~IQueueHandle() {}
 
 	virtual bool Enqueue(DataType const& in_item) = 0;
-	virtual bool Enqueue(DataType&& in_item) = 0;
-	virtual bool Dequeue(DataType& out_item) = 0;
+	virtual bool Enqueue(DataType&& in_item) noexcept = 0;
+	virtual std::optional<DataType> Dequeue() = 0;
 	virtual void Clear() = 0;
 };
 

@@ -6,10 +6,10 @@
 
 void PrintDequeuOne(container::IQueueHandle<int>& queueHandle)
 {
-	int result = 0;
-	if (queueHandle.Dequeue(result))
+	std::optional<int> result;
+	if ((result = queueHandle.Dequeue()) != std::nullopt)
 	{
-		std::cout << "pop: " << result << std::endl;
+		std::cout << "pop: " << result.value() << std::endl;
 	}
 	else
 	{
@@ -48,12 +48,12 @@ int main(int argc, char** argv)
 	{
 		outThreads[i] = std::thread([&](int idx) {
 			const int MaxCount = NumTestThreads * 10000;
-			std::string res;
+			std::optional<std::string> res;
 			for (int i = 0; i < MaxCount / 2; ++i)
 			{
-				if (pQueue->Dequeue(res))
+				if ((res = pQueue->Dequeue()) != std::nullopt)
 				{
-					printf("%s\n", res.c_str());
+					printf("%s\n", res.value().c_str());
 				}
 				else
 				{
